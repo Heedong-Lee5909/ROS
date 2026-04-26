@@ -1,436 +1,316 @@
-# Arduinobot - ROS2 Robot Manipulator Simulation
+# ROS2 Service — 이론 및 실습 정리 / Theory & Practice
 
-## Overview
-A ROS2-based robot manipulator simulation project using Gazebo.
-This project implements a full pipeline from robot description to joint control,
-including RGB camera simulation and ROS2 Control integration for actuating robot joints.
+## 📌 목차 / Table of Contents
 
-## Purpose
-- Simulate a robot manipulator in Gazebo using ROS2
-- Control robot joints (arm + gripper) via ROS2 Control framework
-- Simulate an RGB camera (Raspberry Pi Camera 3 spec) attached to the robot base
-- Enable real-time camera pose tuning via launch arguments (no rebuild required)
-
----
-
-## Package Structure
-
-```
-arduinobot_ws/src/
-├── arduinobot_description/          # Robot description (URDF/Xacro, meshes, launch)
-│   ├── urdf/
-│   │   ├── arduinobot.urdf.xacro       # Main robot model (links, joints)
-│   │   ├── arduinobot_gazebo.xacro     # Gazebo plugin configuration
-│   │   └── arduinobot_ros2_control.xacro # ROS2 Control configuration
-│   ├── meshes/                      # 3D mesh files (.STL)
-│   ├── launch/
-│   │   ├── display.launch.py           # RViz visualization
-│   │   └── gazebo.launch.py            # Gazebo simulation
-│   ├── rviz/
-│   │   └── display.rviz
-│   ├── CMakeLists.txt
-│   └── package.xml
-│
-└── arduinobot_controller/           # ROS2 Control configuration
-    ├── config/
-    │   └── arduinobot_controllers.yaml  # Controller parameters
-    ├── launch/
-    │   └── controller.launch.py         # Controller launch file
-    ├── CMakeLists.txt
-    └── package.xml
-```
+1. [서비스란? / What is a Service?](#서비스란--what-is-a-service)
+2. [통신 방식 비교 / Communication Comparison](#통신-방식-비교--communication-comparison)
+3. [메시지 인터페이스 정의 / Message Interface Definition](#메시지-인터페이스-정의--message-interface-definition)
+4. [서비스 서버 구현 / Service Server Implementation](#서비스-서버-구현--service-server-implementation)
+5. [서비스 클라이언트 구현 / Service Client Implementation](#서비스-클라이언트-구현--service-client-implementation)
+6. [빌드 및 실행 / Build & Run](#빌드-및-실행--build--run)
+7. [CLI 명령어 / CLI Commands](#cli-명령어--cli-commands)
 
 ---
 
-## File Descriptions
+## 서비스란? / What is a Service?
 
-### `arduinobot_description`
+> **한국어**
+> ROS2에서 노드 간 통신 방식 중 하나로, **요청(Request) — 응답(Response)** 구조를 사용합니다.
+> 같은 기능을 여러 노드에 중복 구현하는 대신, **서비스 서버 하나**에 구현하고 여러 노드가 공유합니다.
 
-#### `urdf/arduinobot.urdf.xacro`
-Main robot URDF file. Defines all links and joints of the robot arm.
-- Links: `base_link`, `base_plate`, `forward_drive_arm`, `horizontal_arm`, `claw_support`, `gripper_right`, `gripper_left`, `rgb_camera`
-- Joints: `joint_1` ~ `joint_5` (revolute), `rgb_camera_joint` (fixed)
-- Includes `arduinobot_gazebo.xacro` and `arduinobot_ros2_control.xacro`
-- Supports launch arguments for camera pose tuning:
-  - `cam_x`, `cam_y`, `cam_z`, `cam_roll`, `cam_pitch`, `cam_yaw`
-  - `is_ignition` (default: true) — selects ROS2 Humble compatible plugins
+> **English**
+> A Service is a communication protocol in ROS2 that uses a **Request — Response** pattern.
+> Instead of duplicating the same functionality across multiple nodes, it is implemented once in a **Service Server** and shared by any node that needs it.
 
-#### `urdf/arduinobot_gazebo.xacro`
-Gazebo plugin configuration file.
-- Loads `ign_ros2_control-system` plugin for ROS2 Humble
-- Loads `gz-sim-sensors-system` for RGB camera sensor simulation
-- Configures camera sensor (resolution, FoV, update rate) matching Raspberry Pi Camera 3 spec
+### 구성 요소 / Components
 
-#### `urdf/arduinobot_ros2_control.xacro`
-ROS2 Control hardware interface configuration.
-- Defines `ros2_control` tag with `system` type
-- Loads `IgnitionSystem` hardware plugin for Gazebo simulation
-- Configures command/state interfaces (position) for each joint:
-  - `joint_1`, `joint_2`, `joint_3`: arm joints (-90° ~ 90°)
-  - `joint_4`: gripper right (-90° ~ 0°)
-  - `joint_5`: mimics `joint_4` with multiplier `-1` (moves opposite direction)
-
-#### `launch/display.launch.py`
-Launches RViz for robot model visualization.
-- Supports camera pose arguments for real-time tuning without rebuild
-
-```bash
-# Default launch
-ros2 launch arduinobot_description display.launch.py
-
-# With camera pose arguments (no rebuild needed)
-ros2 launch arduinobot_description display.launch.py \
-  cam_x:=0 cam_y:=0.45 cam_z:=0.2 \
-  cam_roll:=-1.57 cam_pitch:=0 cam_yaw:=-1.57
-```
-
-#### `launch/gazebo.launch.py`
-Launches Gazebo simulation with the robot.
-- Spawns robot via `robot_description` topic
-- Bridges Gazebo topics to ROS2:
-  - `/clock`
-  - `/rgb_camera/image_raw`
-  - `/rgb_camera/camera_info`
-
-```bash
-export LIBGL_ALWAYS_SOFTWARE=1  # Required for VMware
-ros2 launch arduinobot_description gazebo.launch.py
-```
-
----
-
-### `arduinobot_controller`
-
-#### `config/arduinobot_controllers.yaml`
-Defines three controllers:
-
-| Controller | Type | Joints |
+| 역할 / Role | 이름 / Name | 설명 / Description |
 |---|---|---|
-| `arm_controller` | JointTrajectoryController | joint_1, joint_2, joint_3 |
-| `gripper_controller` | JointTrajectoryController | joint_4 |
-| `joint_state_broadcaster` | JointStateBroadcaster | all joints |
+| **서비스 서버** / Service Server | Server Node | 기능을 제공하는 노드 / Node that provides the functionality |
+| **서비스 클라이언트** / Service Client | Client Node | 기능을 요청하는 노드 / Node that requests the functionality |
 
-All controllers use `position` command/state interface.
+### 통신 흐름 / Communication Flow
 
-#### `launch/controller.launch.py`
-Launches the ROS2 Control node and spawns all controllers.
-- Starts `controller_manager` with robot description and YAML config
-- Spawns: `arm_controller`, `gripper_controller`, `joint_state_broadcaster`
-
-```bash
-ros2 launch arduinobot_controller controller.launch.py
+```
+클라이언트 / Client                   서버 / Server
+        │                                  │
+        │──── Request (요청 + 데이터) ────→ │
+        │     (Request + Data)              │
+        │                                  │ 처리 중 / Processing...
+        │   (다른 작업 계속 가능)            │
+        │   (Can continue other tasks)      │
+        │                                  │
+        │←─── Response (결과 반환) ──────── │
+        │     (Result returned)             │
+        │                                  │
+        │ 결과를 받아 다음 동작 수행          │
+        │ (Use result for next action)      │
 ```
 
 ---
 
-## How to Run
+## 통신 방식 비교 / Communication Comparison
 
-### 1. Build
+| 항목 / Item | Publisher-Subscriber | Service |
+|---|---|---|
+| **통신 방향 / Direction** | 단방향 / One-way | 양방향 / Two-way |
+| **응답 여부 / Response** | 없음 / None | 있음 / Yes |
+| **주요 용도 / Use Case** | 센서 데이터 스트림 / Sensor data stream | 기능 요청 및 결과 반환 / Function call & result |
+| **데이터 흐름 / Data flow** | 지속적 발행 / Continuous publish | 요청 시에만 / On demand |
+
+---
+
+## 메시지 인터페이스 정의 / Message Interface Definition
+
+### 패키지 생성 / Create Package
+
 ```bash
-cd ~/arduinobot_ws
+cd ~/ros2_ws/src
+ros2 pkg create --build-type ament_cmake arduinobot_msgs
+```
+
+> 📌 **관례 / Convention**
+> 사용자 정의 메시지는 기능 패키지와 **분리된 전용 패키지**에 보관합니다.
+> User-defined messages should be placed in a **separate dedicated package** from functional packages.
+
+### 인터페이스 파일 / Interface File
+
+`arduinobot_msgs/srv/AddTwoInts.srv`
+
+```
+# 요청 메시지 / Request message (Client → Server)
+int64 a
+int64 b
+---
+# 응답 메시지 / Response message (Server → Client)
+int64 sum
+```
+
+> `---` 위 / Above: **Request** &nbsp;|&nbsp; `---` 아래 / Below: **Response**
+
+### CMakeLists.txt
+
+```cmake
+find_package(std_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "srv/AddTwoInts.srv"
+)
+```
+
+### package.xml
+
+```xml
+<depend>std_msgs</depend>
+<build_depend>rosidl_default_generators</build_depend>
+<exec_depend>rosidl_default_runtime</exec_depend>
+<member_of_group>rosidl_interface_packages</member_of_group>
+```
+
+---
+
+## 서비스 서버 구현 / Service Server Implementation
+
+`arduinobot_examples/simple_service_server.py`
+
+```python
+import rclpy
+from rclpy.node import Node
+from arduinobot_msgs.srv import AddTwoInts
+
+class SimpleServiceServer(Node):
+    def __init__(self):
+        super().__init__('simple_service_server')
+
+        # 서비스 서버 생성 / Create service server
+        self.service = self.create_service(
+            AddTwoInts,            # 메시지 인터페이스 / Message interface
+            'add_two_ints',        # 서비스 이름 / Service name
+            self.service_callback  # 콜백 함수 / Callback function
+        )
+        self.get_logger().info('Service add_two_ints is ready')
+
+    def service_callback(self, request, response):
+        # 요청 수신 로그 / Log received request
+        self.get_logger().info(
+            f'New request received: a={request.a}, b={request.b}'
+        )
+
+        # 핵심 로직: 두 정수의 합 계산 / Core logic: calculate sum
+        response.sum = request.a + request.b
+
+        self.get_logger().info(f'Returning sum: {response.sum}')
+        return response  # 응답 반환 / Return response to client
+
+def main():
+    rclpy.init()
+    node = SimpleServiceServer()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+### 핵심 API / Key API
+
+| 함수 / Function | 설명 / Description |
+|---|---|
+| `create_service(type, name, callback)` | 서비스 서버 생성 / Create service server |
+| `service_callback(request, response)` | 요청 수신 시 자동 실행 / Auto-called on request |
+| `request.a`, `request.b` | 클라이언트가 보낸 데이터 / Data sent by client |
+| `response.sum` | 클라이언트에게 반환할 결과 / Result to return |
+
+---
+
+## 서비스 클라이언트 구현 / Service Client Implementation
+
+`arduinobot_examples/simple_service_client.py`
+
+```python
+import rclpy
+from rclpy.node import Node
+from arduinobot_msgs.srv import AddTwoInts
+import sys
+
+class SimpleServiceClient(Node):
+    def __init__(self, a, b):
+        super().__init__('simple_service_client')
+
+        # 클라이언트 생성 / Create client
+        self.client = self.create_client(AddTwoInts, 'add_two_ints')
+
+        # 서버 준비될 때까지 1초마다 재시도 / Retry every 1s until server ready
+        while not self.client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Service not available, waiting more...')
+
+        # 요청 메시지 생성 / Create request message
+        request = AddTwoInts.Request()
+        request.a = int(a)  # str → int 형변환 필수 / Type cast required
+        request.b = int(b)
+
+        # 비동기 요청 전송 / Send request asynchronously
+        future = self.client.call_async(request)
+        future.add_done_callback(self.response_callback)
+
+    def response_callback(self, future):
+        # 응답 수신 후 결과 출력 / Print result after response received
+        self.get_logger().info(f'Service response: {future.result().sum}')
+
+def main():
+    rclpy.init()
+
+    # 인자 개수 확인 / Check argument count (script name + a + b = 3)
+    if len(sys.argv) != 3:
+        print('Wrong number of arguments!')
+        print('Usage: simple_service_client a b')
+        return -1
+
+    node = SimpleServiceClient(sys.argv[1], sys.argv[2])
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+```
+
+### 핵심 API / Key API
+
+| 함수 / Function | 설명 / Description |
+|---|---|
+| `create_client(type, name)` | 서비스 클라이언트 생성 / Create service client |
+| `wait_for_service(timeout_sec)` | 서버 준비 대기 / Wait for server to be ready |
+| `call_async(request)` | 비동기 요청 전송 / Send request asynchronously |
+| `future.add_done_callback(fn)` | 응답 완료 시 실행할 함수 등록 / Register callback for response |
+
+> ⚠️ `sys.argv`로 받은 인자는 기본적으로 **문자열(str)** 타입입니다.
+> Arguments from `sys.argv` are **strings** by default — always cast to `int()`.
+
+---
+
+## 빌드 및 실행 / Build & Run
+
+### setup.py 등록 / Register in setup.py
+
+```python
+entry_points={
+    'console_scripts': [
+        'simple_service_server = arduinobot_examples.simple_service_server:main',
+        'simple_service_client = arduinobot_examples.simple_service_client:main',
+    ],
+},
+```
+
+### package.xml 의존성 추가 / Add dependency
+
+```xml
+<exec_depend>arduinobot_msgs</exec_depend>
+```
+
+### 빌드 / Build
+
+```bash
+cd ~/ros2_ws
 colcon build
 source install/setup.bash
 ```
 
-### 2. Launch Gazebo Simulation
+### 실행 / Run
+
 ```bash
-export LIBGL_ALWAYS_SOFTWARE=1
-ros2 launch arduinobot_description gazebo.launch.py
+# 터미널 1 / Terminal 1: 서비스 서버 실행 / Run service server
+ros2 run arduinobot_examples simple_service_server
+
+# 터미널 2 / Terminal 2: 서비스 클라이언트 실행 (5 + 3) / Run client
+ros2 run arduinobot_examples simple_service_client 5 3
 ```
 
-### 3. Launch Controllers (new terminal)
-```bash
-source ~/arduinobot_ws/install/setup.bash
-ros2 launch arduinobot_controller controller.launch.py
+### 실행 결과 / Expected Output
+
 ```
+# 서버 터미널 / Server terminal
+[INFO] Service add_two_ints is ready
+[INFO] New request received: a=5, b=3
+[INFO] Returning sum: 8
 
----
-
-## Moving the Gripper
-
-### Check available controllers
-```bash
-ros2 control list_controllers
-```
-
-### Move gripper (open)
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_4'],
-    points: [{
-      positions: [-0.5],
-      time_from_start: {sec: 1}
-    }]
-  }"
-```
-
-### Move gripper (close)
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_4'],
-    points: [{
-      positions: [0.0],
-      time_from_start: {sec: 1}
-    }]
-  }"
-```
-
-### Move arm joints
-```bash
-ros2 topic pub /arm_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_1', 'joint_2', 'joint_3'],
-    points: [{
-      positions: [0.5, 0.5, 0.5],
-      time_from_start: {sec: 1}
-    }]
-  }"
+# 클라이언트 터미널 / Client terminal
+[INFO] Service response: 8
 ```
 
 ---
 
-## RGB Camera
+## CLI 명령어 / CLI Commands
 
-### Verify camera topics
 ```bash
-ros2 topic list | grep rgb_camera
-ros2 topic hz /rgb_camera/image_raw
+# 실행 중인 서비스 목록 / List running services
+ros2 service list
+
+# 서비스 인터페이스 타입 확인 / Check service interface type
+ros2 service type /add_two_ints
+
+# 터미널에서 직접 요청 / Send request directly from terminal (7 + 5)
+ros2 service call /add_two_ints arduinobot_msgs/srv/AddTwoInts "{a: 7, b: 5}"
 ```
 
-### Camera Specifications (Raspberry Pi Camera 3)
-| Parameter | Value |
+### 시나리오별 동작 / Behavior by Scenario
+
+| 상황 / Situation | 결과 / Result |
 |---|---|
-| Resolution | 2304 × 1296 |
-| FPS | 30 |
-| Horizontal FoV | 66° (1.15 rad) |
-| Vertical FoV | 41° (0.71 rad) |
-
-### Visualize in RViz
-1. Add `Image` display
-2. Set Fixed Frame to `base_link`
-3. Set Topic to `/rgb_camera/image_raw`
+| 서버 ON + 클라이언트 `5 3` 실행 / Server ON + client `5 3` | ✅ `Service response: 8` |
+| 인자 없이 실행 / Run without arguments | ❌ `Wrong number of arguments!` |
+| 서버 OFF + 클라이언트 실행 / Server OFF + client run | ⏳ `Service not available, waiting more...` 반복 / Repeats |
+| 대기 중 서버 ON / Server starts while client waits | ✅ 자동 요청 및 응답 수신 / Auto request & response |
 
 ---
 
----
+## 서버 vs 클라이언트 비교 / Server vs Client Summary
 
-# 아두이노봇 - ROS2 로봇 매니퓰레이터 시뮬레이션
-
-## 개요
-ROS2와 Gazebo를 활용한 로봇 매니퓰레이터 시뮬레이션 프로젝트입니다.
-로봇 모델링부터 관절 제어, RGB 카메라 시뮬레이션까지 전체 파이프라인을 구현했습니다.
-
-## 목적
-- Gazebo에서 로봇 매니퓰레이터 시뮬레이션
-- ROS2 Control 프레임워크로 로봇 관절(arm + gripper) 제어
-- 라즈베리파이 카메라 3 스펙의 RGB 카메라 시뮬레이션
-- launch 인자로 카메라 위치/방향 실시간 튜닝 (빌드 불필요)
-
----
-
-## 패키지 구조
-
-```
-arduinobot_ws/src/
-├── arduinobot_description/          # 로봇 모델 (URDF/Xacro, 메쉬, 런치)
-│   ├── urdf/
-│   │   ├── arduinobot.urdf.xacro       # 메인 로봇 모델 (링크, 조인트)
-│   │   ├── arduinobot_gazebo.xacro     # Gazebo 플러그인 설정
-│   │   └── arduinobot_ros2_control.xacro # ROS2 Control 설정
-│   ├── meshes/                      # 3D 메쉬 파일 (.STL)
-│   ├── launch/
-│   │   ├── display.launch.py           # RViz 시각화
-│   │   └── gazebo.launch.py            # Gazebo 시뮬레이션
-│   ├── rviz/
-│   │   └── display.rviz
-│   ├── CMakeLists.txt
-│   └── package.xml
-│
-└── arduinobot_controller/           # ROS2 Control 설정
-    ├── config/
-    │   └── arduinobot_controllers.yaml  # 컨트롤러 파라미터
-    ├── launch/
-    │   └── controller.launch.py         # 컨트롤러 런치 파일
-    ├── CMakeLists.txt
-    └── package.xml
-```
-
----
-
-## 파일 설명
-
-### `arduinobot_description`
-
-#### `urdf/arduinobot.urdf.xacro`
-메인 로봇 URDF 파일. 로봇 팔의 모든 링크와 조인트 정의.
-- 링크: `base_link`, `base_plate`, `forward_drive_arm`, `horizontal_arm`, `claw_support`, `gripper_right`, `gripper_left`, `rgb_camera`
-- 조인트: `joint_1` ~ `joint_5` (revolute), `rgb_camera_joint` (fixed)
-- `arduinobot_gazebo.xacro`, `arduinobot_ros2_control.xacro` include
-- 카메라 위치 튜닝을 위한 launch 인자 지원:
-  - `cam_x`, `cam_y`, `cam_z`, `cam_roll`, `cam_pitch`, `cam_yaw`
-  - `is_ignition` (기본값: true) — ROS2 Humble 호환 플러그인 선택
-
-#### `urdf/arduinobot_gazebo.xacro`
-Gazebo 플러그인 설정 파일.
-- ROS2 Humble용 `ign_ros2_control-system` 플러그인 로드
-- RGB 카메라 센서 시뮬레이션을 위한 `gz-sim-sensors-system` 로드
-- 라즈베리파이 카메라 3 스펙에 맞는 카메라 센서 설정 (해상도, FoV, 업데이트 주기)
-
-#### `urdf/arduinobot_ros2_control.xacro`
-ROS2 Control 하드웨어 인터페이스 설정.
-- `system` 타입의 `ros2_control` 태그 정의
-- Gazebo 시뮬레이션용 `IgnitionSystem` 하드웨어 플러그인 로드
-- 각 조인트의 command/state 인터페이스 (position) 설정:
-  - `joint_1`, `joint_2`, `joint_3`: 팔 관절 (-90° ~ 90°)
-  - `joint_4`: 그리퍼 오른쪽 (-90° ~ 0°)
-  - `joint_5`: `joint_4`를 multiplier `-1`로 mimic (반대 방향으로 동일하게 움직임)
-
-#### `launch/display.launch.py`
-RViz 로봇 모델 시각화 런치 파일.
-- 빌드 없이 카메라 위치 실시간 튜닝 가능한 launch 인자 지원
-
-```bash
-# 기본 실행
-ros2 launch arduinobot_description display.launch.py
-
-# 카메라 위치/방향 조정 (빌드 불필요)
-ros2 launch arduinobot_description display.launch.py \
-  cam_x:=0 cam_y:=0.45 cam_z:=0.2 \
-  cam_roll:=-1.57 cam_pitch:=0 cam_yaw:=-1.57
-```
-
-#### `launch/gazebo.launch.py`
-Gazebo 시뮬레이션 런치 파일.
-- `robot_description` 토픽으로 로봇 스폰
-- Gazebo 토픽을 ROS2로 브릿지:
-  - `/clock`
-  - `/rgb_camera/image_raw`
-  - `/rgb_camera/camera_info`
-
-```bash
-export LIBGL_ALWAYS_SOFTWARE=1  # VMware 환경 필수
-ros2 launch arduinobot_description gazebo.launch.py
-```
-
----
-
-### `arduinobot_controller`
-
-#### `config/arduinobot_controllers.yaml`
-컨트롤러 3개 정의:
-
-| 컨트롤러 | 타입 | 담당 조인트 |
+| 항목 / Item | 서비스 서버 / Service Server | 서비스 클라이언트 / Service Client |
 |---|---|---|
-| `arm_controller` | JointTrajectoryController | joint_1, joint_2, joint_3 |
-| `gripper_controller` | JointTrajectoryController | joint_4 |
-| `joint_state_broadcaster` | JointStateBroadcaster | 전체 조인트 |
-
-모든 컨트롤러는 `position` command/state 인터페이스 사용.
-
-#### `launch/controller.launch.py`
-ROS2 Control 노드 및 컨트롤러 스포너 런치 파일.
-- 로봇 description과 YAML 설정으로 `controller_manager` 시작
-- `arm_controller`, `gripper_controller`, `joint_state_broadcaster` 스폰
-
-```bash
-ros2 launch arduinobot_controller controller.launch.py
-```
-
----
-
-## 실행 방법
-
-### 1. 빌드
-```bash
-cd ~/arduinobot_ws
-colcon build
-source install/setup.bash
-```
-
-### 2. Gazebo 시뮬레이션 실행
-```bash
-export LIBGL_ALWAYS_SOFTWARE=1
-ros2 launch arduinobot_description gazebo.launch.py
-```
-
-### 3. 컨트롤러 실행 (새 터미널)
-```bash
-source ~/arduinobot_ws/install/setup.bash
-ros2 launch arduinobot_controller controller.launch.py
-```
-
----
-
-## 그리퍼 움직이기
-
-### 컨트롤러 목록 확인
-```bash
-ros2 control list_controllers
-```
-
-### 그리퍼 열기
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_4'],
-    points: [{
-      positions: [-0.5],
-      time_from_start: {sec: 1}
-    }]
-  }"
-```
-
-### 그리퍼 닫기
-```bash
-ros2 topic pub /gripper_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_4'],
-    points: [{
-      positions: [0.0],
-      time_from_start: {sec: 1}
-    }]
-  }"
-```
-
-### 팔 관절 움직이기
-```bash
-ros2 topic pub /arm_controller/joint_trajectory \
-  trajectory_msgs/msg/JointTrajectory \
-  "{
-    joint_names: ['joint_1', 'joint_2', 'joint_3'],
-    points: [{
-      positions: [0.5, 0.5, 0.5],
-      time_from_start: {sec: 1}
-    }]
-  }"
-```
-
----
-
-## RGB 카메라
-
-### 카메라 토픽 확인
-```bash
-ros2 topic list | grep rgb_camera
-ros2 topic hz /rgb_camera/image_raw
-```
-
-### 카메라 사양 (라즈베리파이 카메라 3)
-| 파라미터 | 값 |
-|---|---|
-| 해상도 | 2304 × 1296 |
-| FPS | 30 |
-| 수평 FoV | 66° (1.15 rad) |
-| 수직 FoV | 41° (0.71 rad) |
-
-### RViz에서 카메라 영상 확인
-1. `Image` 디스플레이 추가
-2. Fixed Frame을 `base_link`로 설정
-3. Topic을 `/rgb_camera/image_raw`로 설정
+| 생성 함수 / Create fn | `create_service()` | `create_client()` |
+| 역할 / Role | 요청 수신 → 처리 → 응답 / Receive → Process → Respond | 요청 전송 → 응답 수신 / Send → Receive |
+| 콜백 인자 / Callback args | `(request, response)` | `(future)` |
+| 동작 방식 / Behavior | 수동적 — 요청 대기 / Passive — waits for request | 능동적 — 먼저 요청 / Active — initiates request |
