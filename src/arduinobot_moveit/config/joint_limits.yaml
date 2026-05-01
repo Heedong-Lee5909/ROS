@@ -1,0 +1,36 @@
+# joint_limits.yaml
+# MoveIt이 각 관절을 움직일 때 적용할 속도 및 가속도 제한을 정의하는 파일이에요.
+# 실제 하드웨어 손상 방지 및 안전한 동작을 위해 설정해요.
+
+# 전체 관절에 적용되는 기본 스케일링 비율 (0.0 ~ 1.0)
+# max_velocity에 이 값을 곱한 속도로 실제 동작해요.
+# 예: max_velocity 10.0 * 0.1 = 실제 속도 1.0
+default_velocity_scaling_factor: 0.1
+default_acceleration_scaling_factor: 0.1
+
+joint_limits:
+  joint_1:  # 베이스 회전 관절
+    has_velocity_limits: true       # 속도 제한 사용 여부
+    max_velocity: 10.0              # 최대 속도 (rad/s)
+    has_acceleration_limits: false  # 가속도 제한 사용 여부 (false = 제한 없음)
+    max_acceleration: 0.0           # 최대 가속도 (rad/s²) - 제한 없으므로 미사용
+  joint_2:  # 팔 전방 구동 관절
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: false
+    max_acceleration: 0.0
+  joint_3:  # 수평 팔 관절
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: false
+    max_acceleration: 0.0
+  joint_4:  # 오른쪽 집게 손가락 관절
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: false
+    max_acceleration: 0.0
+  joint_5:  # 왼쪽 집게 손가락 관절 (joint_4 미러링)
+    has_velocity_limits: true
+    max_velocity: 10.0
+    has_acceleration_limits: false
+    max_acceleration: 0.0

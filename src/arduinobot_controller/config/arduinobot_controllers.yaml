@@ -26,7 +26,7 @@ arm_controller:
     state_interfaces:
       - position
 
-    open_loop_controller: true
+    open_loop_control: true
     allow_integration_in_goal_trajectories: true
 
 gripper_controller:
@@ -42,6 +42,6 @@ gripper_controller:
     state_interfaces:
       - position
 
-    open_loop_controller: true
+    open_loop_control: true
     allow_integration_in_goal_trajectories: true
 

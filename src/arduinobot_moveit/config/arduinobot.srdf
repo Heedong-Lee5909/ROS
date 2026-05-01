@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!--
+    URDF vs SRDF 차이점
+    
+    URDF (Unified Robot Description Format)
+    - 로봇의 물리적 구조를 정의해요
+    - 링크(부품)와 조인트(연결부)의 형상, 질량, 관성, 충돌 모델 등을 기술해요
+    - 로봇이 "어떻게 생겼는가"를 정의하는 파일이에요
+    
+    SRDF (Semantic Robot Description Format)
+    - 로봇의 의미론적(Semantic) 정보를 정의해요
+    - MoveIt이 로봇을 제어하기 위해 필요한 추가 정보를 기술해요
+    - 관절 그룹, 홈 포지션, 충돌 무시 설정 등 "어떻게 움직일 것인가"를 정의하는 파일이에요
+    - URDF만으로는 MoveIt이 어떤 관절을 함께 제어해야 할지 모르기 때문에 SRDF가 필요해요
+-->
+
+<robot name="arduinobot">
+
+    <!-- 팔(arm) 그룹 정의: MoveIt이 제어할 관절 묶음 -->
+    <group name="arm">
+        <joint name="virtual_joint"/>                       <!-- 월드와 베이스 연결하는 가상 관절 -->
+        <joint name="joint_1"/>                             <!-- 베이스 회전 관절 -->
+        <joint name="joint_2"/>                             <!-- 팔 전방 구동 관절 -->
+        <joint name="joint_3"/>                             <!-- 수평 팔 관절 -->
+        <joint name="horizontal_arm_to_claw_support"/>      <!-- 수평 팔과 집게 지지대 연결 고정 관절 -->
+    </group>
+
+    <!-- 집게(gripper) 그룹 정의: 집게 손가락 관절 묶음 -->
+    <group name="gripper">
+        <joint name="joint_4"/>     <!-- 오른쪽 집게 손가락 관절 -->
+        <joint name="joint_5"/>     <!-- 왼쪽 집게 손가락 관절 (joint_4 미러링) -->
+    </group>
+
+    <!-- arm 그룹의 홈 포지션 정의: 모든 관절이 0도인 기본 자세 -->
+    <group_state name="home" group="arm">
+        <joint name="joint_1" value="0"/>
+        <joint name="joint_2" value="0"/>
+        <joint name="joint_3" value="0"/>
+    </group_state>
+
+    <!-- gripper 그룹의 홈 포지션 정의: 집게가 닫힌 기본 자세 -->
+    <group_state name="home" group="gripper">
+        <joint name="joint_4" value="0"/>
+    </group_state>
+
+    <!-- 
+        충돌 감지 비활성화 설정
+        URDF에서 정의된 모든 링크 쌍에 대해 충돌 검사를 수행하면
+        계산량이 너무 많아져요. 따라서 절대 충돌하지 않거나
+        인접해 있어 항상 충돌로 감지되는 링크 쌍은 여기서 제외해요.
+        reason 속성:
+        - Adjacent: 서로 인접한 링크라 충돌 감지 불필요
+        - Never: 구조상 절대 충돌하지 않는 링크
+    -->
+    <disable_collisions link1="base_link" link2="base_plate" reason="Adjacent"/>             <!-- 인접한 링크라 충돌 감지 불필요 -->
+    <disable_collisions link1="base_link" link2="forward_drive_arm" reason="Never"/>         <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="base_plate" link2="forward_drive_arm" reason="Never"/>        <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="claw_support" link2="forward_drive_arm" reason="Never"/>      <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="claw_support" link2="gripper_left" reason="Never"/>           <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="claw_support" link2="gripper_right" reason="Never"/>          <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="forward_drive_arm" link2="" reason="Never"/>                  <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="forward_drive_arm" link2="gripper_right" reason="Never"/>     <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="forward_drive_arm" link2="horizontal_arm" reason="Never"/>    <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="gripper_left" link2="horizontal_arm" reason="Never"/>         <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="gripper_right" link2="horizontal_arm" reason="Never"/>        <!-- 절대 충돌하지 않는 링크 -->
+    <disable_collisions link1="gripper_left" link2="gripper_right" reason="Never"/>          <!-- 집게 좌우가 서로 충돌 감지 불필요 -->
+
+</robot>

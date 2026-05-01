@@ -1,0 +1,41 @@
+# moveit_controllers_manager.yaml
+# MoveIt이 실제 로봇 컨트롤러와 통신하는 방법을 정의하는 파일이에요.
+# MoveIt이 계획한 궤적을 실제 ROS2 Control 컨트롤러에 전달하는 인터페이스 역할을 해요.
+
+# MoveIt 컨트롤러 매니저 플러그인 지정
+# MoveItSimpleControllerManager는 ROS2 Control과 연동하는 기본 매니저예요
+moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager
+
+moveit_simple_controller_manager:
+  # 사용할 컨트롤러 목록 (arduinobot_controllers.yaml에서 정의한 컨트롤러와 이름이 일치해야 해요)
+  controller_names:
+    - arm_controller
+    - gripper_controller
+  
+  arm_controller:
+    # ROS2 Action 인터페이스 이름
+    # follow_joint_trajectory는 궤적을 따라 관절을 움직이는 표준 액션이에요
+    action_ns: follow_joint_trajectory
+      
+    # 컨트롤러 타입
+    # FollowJointTrajectory: 시간에 따른 관절 궤적을 추종하는 타입이에요
+    type: FollowJointTrajectory
+      
+    # 기본 컨트롤러 여부 (True = MoveIt이 기본으로 사용하는 컨트롤러)
+    default: True
+      
+    # 이 컨트롤러가 제어할 관절 목록
+    joints:
+      - joint_1   # 베이스 회전 관절
+      - joint_2   # 팔 전방 구동 관절
+      - joint_3   # 수평 팔 관절
+
+  gripper_controller:
+    action_ns: follow_joint_trajectory
+    type: FollowJointTrajectory
+    default: True
+      
+    # 이 컨트롤러가 제어할 관절 목록
+    joints:
+      - joint_4   # 오른쪽 집게 손가락 관절
+      - joint_5   # 왼쪽 집게 손가락 관절 (joint_4 미러링)

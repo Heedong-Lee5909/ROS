@@ -1,0 +1,10 @@
+# initial_positions.yaml
+# MoveIt이 시뮬레이션 또는 실제 로봇을 시작할 때
+# 각 관절의 초기 위치(각도)를 정의하는 파일이에요.
+# 단위는 라디안(radian)이에요.
+
+initial_positions:
+  joint_1: 0    # 베이스 회전 관절 초기 각도 (0 rad = 정면)
+  joint_2: 0    # 팔 전방 구동 관절 초기 각도 (0 rad = 수직)
+  joint_3: 0    # 수평 팔 관절 초기 각도 (0 rad = 수평)
+  joint_4: 0    # 집게 관절 초기 각도 (0 rad = 닫힌 상태)
