@@ -1,288 +1,164 @@
-# ROS2 액션 서버 & 클라이언트 실습 / Action Server & Client Practice
+# MoveIt2 C++ API 실습 / MoveIt2 C++ API Practice
 
 ---
 
 ## 📌 목차 / Table of Contents
 
 1. [실습 개요 / Practice Overview](#1-실습-개요--practice-overview)
-2. [액션 인터페이스 정의 / Define Action Interface](#2-액션-인터페이스-정의--define-action-interface)
-3. [액션 서버 구현 / Action Server Implementation](#3-액션-서버-구현--action-server-implementation)
-4. [액션 클라이언트 구현 / Action Client Implementation](#4-액션-클라이언트-구현--action-client-implementation)
-5. [빌드 및 실행 / Build & Run](#5-빌드-및-실행--build--run)
-6. [CLI 명령어 / CLI Commands](#6-cli-명령어--cli-commands)
-7. [서버 vs 클라이언트 비교 / Server vs Client Summary](#7-서버-vs-클라이언트-비교--server-vs-client-summary)
+2. [C++ 노드 구현 / C++ Node Implementation](#2-c-노드-구현--c-node-implementation)
+3. [빌드 설정 / Build Configuration](#3-빌드-설정--build-configuration)
+4. [실행 순서 / Execution Order](#4-실행-순서--execution-order)
+5. [실행 결과 / Expected Result](#5-실행-결과--expected-result)
+6. [Python API vs C++ API 비교 / Comparison](#6-python-api-vs-c-api-비교--comparison)
 
 ---
 
 ## 1. 실습 개요 / Practice Overview
 
 > **한국어**
-> 피보나치 수열을 계산하는 액션 서버와 이를 요청하는 액션 클라이언트를 Python으로 구현합니다.
-> 액션은 시간이 오래 걸리는 작업에 적합한 ROS2 통신 프로토콜로,
-> Goal → Feedback → Result 의 흐름으로 동작합니다.
+> MoveIt2 C++ API를 사용해 로봇을 원하는 위치로 이동시키는 간단한 C++ 노드를 구현하고 실행합니다.
+> 이 코드는 이후 더 복잡한 애플리케이션의 템플릿으로 활용됩니다.
 
 > **English**
-> We implement a Fibonacci action server and an action client in Python.
-> Actions are a ROS2 communication protocol suited for long-running tasks,
-> operating in a Goal → Feedback → Result flow.
+> Implement and run a simple C++ node that uses the MoveIt2 C++ API to move the robot to a desired position.
+> This code serves as a template for building more complex applications.
 
-### 피보나치 수열이란? / What is the Fibonacci Sequence?
+> ⚠️ **버전 참고 / Version Note**
+> MoveIt2 **Python API** → ROS2 Iron 이상에서만 사용 가능 / Only available on ROS2 Iron and above
+> MoveIt2 **C++ API** → ROS2 Humble 포함 모든 버전 사용 가능 / Available on all versions including Humble
 
-> 각 숫자가 앞의 두 숫자의 합인 수열 (첫 두 숫자는 0과 1로 정의)
-> A sequence where each number is the sum of the two preceding ones (first two numbers are 0 and 1)
+### 목표 동작 / Target Motion
 
-| Order | 수열 / Sequence |
-|---|---|
-| 1 | 0, 1 |
-| 2 | 0, 1, 1 |
-| 3 | 0, 1, 1, 2 |
-| 4 | 0, 1, 1, 2, 3 |
-| 10 | 0, 1, 1, 2, 3, 5, 8, 13, 21, 34 |
-
-### 메시지 역할 / Message Roles
-
-| 메시지 / Message | 내용 / Content |
-|---|---|
-| **Goal** | 계산할 수열의 Order / Order of sequence to calculate |
-| **Feedback** | 매 단계마다 현재까지의 partial_sequence / Partial sequence at each step |
-| **Result** | 완성된 전체 sequence / Complete final sequence |
+| 관절 / Joint | 목표값 / Target | 동작 / Motion |
+|---|---|---|
+| joint1 (베이스 / Base) | 1.57 rad (90°) | 베이스 90° 회전 / Rotate base 90° |
+| joint2, joint3 | 0.0 | 고정 / Fixed |
+| joint4 (그리퍼 / Gripper) | -0.7 rad | 그리퍼 열림 / Gripper opens |
+| joint5 (그리퍼 / Gripper) | 0.7 rad | 반대 방향 / Opposite direction |
 
 ---
 
-## 2. 액션 인터페이스 정의 / Define Action Interface
+## 2. C++ 노드 구현 / C++ Node Implementation
 
-> 📌 `arduinobot_msgs` 패키지의 `action/` 폴더에 추가합니다.
-> Add to the `action/` folder of the `arduinobot_msgs` package.
+**`arduinobot_cpp_examples/simple_moveit_interface.cpp`**
 
-**`arduinobot_msgs/action/Fibonacci.action`**
+```cpp
+#include <memory>                                                    // shared_ptr 사용 / For shared_ptr
+#include <rclcpp/rclcpp.hpp>                                         // ROS2 C++ 라이브러리 / ROS2 C++ library
+#include <moveit/move_group_interface/move_group_interface.h>        // MoveIt2 C++ API
 
+// 노드를 입력받아 로봇을 목표 위치로 이동시키는 함수
+// Function that moves the robot to target position using MoveIt2 API
+void move_robot(const std::shared_ptr<rclcpp::Node> node)
+{
+    // arm / gripper Move Group 접근 (SRDF에서 정의한 그룹명)
+    // Access move groups (names defined in SRDF)
+    auto arm_move_group     = moveit::planning_interface::MoveGroupInterface(node, "arm");
+    auto gripper_move_group = moveit::planning_interface::MoveGroupInterface(node, "gripper");
+
+    // arm 목표 관절 위치 (joint1=90°, joint2=0, joint3=0)
+    // arm target joint positions (joint1=90°, joint2=0, joint3=0)
+    std::vector<double> arm_joint_goal     {1.57, 0.0, 0.0};
+
+    // gripper 목표 관절 위치 (반대 방향 회전 → 그리퍼 열림)
+    // gripper target joint positions (opposite directions → gripper opens)
+    std::vector<double> gripper_joint_goal {-0.7, 0.7};
+
+    // 목표 위치 적용 + 관절 범위 내 여부 확인 (범위 초과 시 false 반환)
+    // Set joint targets + check if within limits (returns false if out of limits)
+    bool arm_within_bounds     = arm_move_group.setJointValueTarget(arm_joint_goal);
+    bool gripper_within_bounds = gripper_move_group.setJointValueTarget(gripper_joint_goal);
+
+    // 관절 범위 초과 시 경고 출력 후 종료
+    // Warn and return if target joints are out of limits
+    if(!arm_within_bounds || !gripper_within_bounds)
+    {
+        RCLCPP_WARN(rclcpp::get_logger("rclcpp"),
+            "Target joint position(s) were outside of limits, but we will plan and clamp to the limits");
+        return;
+    }
+
+    // 궤적 계획 결과를 저장할 Plan 객체 생성
+    // Create Plan objects to store trajectory planning results
+    moveit::planning_interface::MoveGroupInterface::Plan arm_plan;
+    moveit::planning_interface::MoveGroupInterface::Plan gripper_plan;
+
+    // 궤적 계획 실행 + 성공 여부 저장
+    // Execute trajectory planning + store success result
+    bool arm_plan_success =
+        (arm_move_group.plan(arm_plan) == moveit::core::MoveItErrorCode::SUCCESS);
+    bool gripper_plan_success =
+        (gripper_move_group.plan(gripper_plan) == moveit::core::MoveItErrorCode::SUCCESS);
+
+    // 두 계획 모두 성공 시 실행 / Execute if both plans succeeded
+    if(arm_plan_success && gripper_plan_success)
+    {
+        arm_move_group.move();      // arm 궤적 실행 / Execute arm trajectory
+        gripper_move_group.move();  // gripper 궤적 실행 / Execute gripper trajectory
+    }
+    else
+    {
+        // 계획 실패 시 에러 출력 후 종료
+        // Print error and return if planning failed
+        RCLCPP_ERROR(rclcpp::get_logger("rclcpp"), "One or more planners failed");
+        return;
+    }
+}
+
+int main(int argc, char **argv)
+{
+    rclcpp::init(argc, argv);                                              // ROS2 초기화 / Initialize ROS2
+    std::shared_ptr<rclcpp::Node> node =
+        rclcpp::Node::make_shared("simple_moveit_interface");              // 노드 생성 / Create node
+    move_robot(node);                                                      // 로봇 이동 실행 / Execute motion
+    rclcpp::spin(node);                                                    // 콜백 대기 / Wait for callbacks
+    rclcpp::shutdown();                                                    // ROS2 종료 / Shutdown ROS2
+}
 ```
-# Goal: 계산할 수열의 order / Order of the sequence to calculate
-int32 order
----
-# Result: 완성된 전체 수열 / Complete Fibonacci sequence
-int32[] sequence
----
-# Feedback: 현재까지 계산된 부분 수열 / Partial sequence calculated so far
-int32[] partial_sequence
-```
 
-> ⚠️ `.srv`와 달리 `---`가 **세 번** 사용됩니다 / Unlike `.srv`, `---` is used **three times**:
-> - 첫 번째 `---` 위 / Above first `---`: **Goal**
-> - 두 `---` 사이 / Between two `---`: **Result**
-> - 두 번째 `---` 아래 / Below second `---`: **Feedback**
+### 핵심 API 정리 / Key API Summary
 
-### CMakeLists.txt (arduinobot_msgs) 업데이트 / Update
+| 함수 / Function | 설명 / Description |
+|---|---|
+| `MoveGroupInterface(node, "arm")` | arm Move Group 접근 / Access arm move group |
+| `MoveGroupInterface(node, "gripper")` | gripper Move Group 접근 / Access gripper move group |
+| `setJointValueTarget(vector)` | 목표 관절 위치 설정, bool 반환 / Set target, returns bool |
+| `plan(plan_obj)` | 현재→목표 궤적 계획 / Plan trajectory current→target |
+| `MoveItErrorCode::SUCCESS` | 계획 성공 여부 확인 / Check planning success |
+| `move()` | 계획된 궤적 실행 / Execute planned trajectory |
+
+---
+
+## 3. 빌드 설정 / Build Configuration
+
+### CMakeLists.txt
 
 ```cmake
-rosidl_generate_interfaces(${PROJECT_NAME}
-  "srv/AddTwoInts.srv"
-  "srv/EulerToQuaternion.srv"
-  "srv/QuaternionToEuler.srv"
-  "action/Fibonacci.action"   # 추가 / Add
+# 의존성 추가 / Add dependency
+find_package(moveit_ros_planning_interface REQUIRED)
+
+# 실행 파일 등록 / Register executable
+add_executable(simple_moveit_interface
+  src/simple_moveit_interface.cpp
+)
+
+# 의존성 연결 / Link dependencies
+ament_target_dependencies(simple_moveit_interface
+  rclcpp
+  moveit_ros_planning_interface
+)
+
+# 설치 / Install
+install(TARGETS
+  simple_moveit_interface
+  DESTINATION lib/${PROJECT_NAME}
 )
 ```
 
-### package.xml (arduinobot_msgs) 업데이트 / Update
+### package.xml
 
 ```xml
-<depend>action_msgs</depend>
-```
-
----
-
-## 3. 액션 서버 구현 / Action Server Implementation
-
-**`arduinobot_examples/simple_action_server.py`**
-
-```python
-import rclpy                              # ROS2 Python 클라이언트 라이브러리 / ROS2 Python client library
-from rclpy.node import Node               # ROS2 노드 기본 클래스 / Base class for ROS2 nodes
-from rclpy.action import ActionServer     # 액션 서버 클래스 / Action server class
-from arduinobot_msgs.action import Fibonacci  # 피보나치 액션 인터페이스 / Fibonacci action interface
-import time                               # 지연 처리 / For sleep
-
-class SimpleActionServer(Node):
-    def __init__(self):
-        # 노드 초기화 / Initialize node
-        super().__init__('simple_action_server')
-
-        # 액션 서버 생성 / Create action server
-        # (노드, 인터페이스, 서버이름, 콜백함수 / node, interface, server name, callback)
-        self.action_server = ActionServer(
-            self, Fibonacci, 'fibonacci', self.goalCallback
-        )
-        self.get_logger().info('Starting the server')
-
-    def goalCallback(self, goal_handle):
-        # Goal 수신 시 자동 실행 / Auto-called when goal is received
-        self.get_logger().info(
-            'Received goal request with order %d' % goal_handle.request.order
-        )
-
-        # Feedback 메시지 초기화 (첫 두 값: 0, 1)
-        # Initialize feedback with first two Fibonacci numbers (0, 1)
-        feedback_msg = Fibonacci.Feedback()
-        feedback_msg.partial_sequence = [0, 1]
-
-        # 피보나치 수열 계산 루프 / Calculate Fibonacci sequence
-        for i in range(1, goal_handle.request.order):
-
-            # 새 원소 = 마지막 + 이전 원소 / New element = last + previous
-            feedback_msg.partial_sequence.append(
-                feedback_msg.partial_sequence[i] +
-                feedback_msg.partial_sequence[i - 1]
-            )
-
-            self.get_logger().info(
-                'Feedback: {0}'.format(feedback_msg.partial_sequence)
-            )
-
-            # 클라이언트에 Feedback 전송 / Send feedback to client
-            goal_handle.publish_feedback(feedback_msg)
-
-            # 1초 대기 (오래 걸리는 작업 시뮬레이션) / Wait 1s (simulate long task)
-            time.sleep(1)
-
-        # 액션 성공 처리 / Mark goal as succeeded
-        goal_handle.succeed()
-
-        # Result 메시지 생성 및 반환 / Create and return result
-        result = Fibonacci.Result()
-        result.sequence = feedback_msg.partial_sequence
-        return result
-
-def main():
-    rclpy.init()
-    simple_action_server = SimpleActionServer()
-    rclpy.spin(simple_action_server)       # Goal 수신 대기 / Wait for goals
-    simple_action_server.destroy_node()
-    rclpy.shutdown()
-
-if __name__ == '__main__':
-    main()
-```
-
-### 핵심 API / Key API
-
-| 함수 / Function | 설명 / Description |
-|---|---|
-| `ActionServer(node, interface, name, callback)` | 액션 서버 생성 / Create action server |
-| `goal_handle.request.order` | 클라이언트가 보낸 Goal 데이터 접근 / Access goal data from client |
-| `goal_handle.publish_feedback(msg)` | 클라이언트에 Feedback 전송 / Send feedback to client |
-| `goal_handle.succeed()` | 액션 성공으로 완료 처리 / Mark action as succeeded |
-| `time.sleep(1)` | 오래 걸리는 작업 시뮬레이션 / Simulate long-running task |
-
----
-
-## 4. 액션 클라이언트 구현 / Action Client Implementation
-
-**`arduinobot_examples/simple_action_client.py`**
-
-```python
-import rclpy                              # ROS2 Python 클라이언트 라이브러리 / ROS2 Python client library
-from rclpy.node import Node               # ROS2 노드 기본 클래스 / Base class for ROS2 nodes
-from rclpy.action import ActionClient     # 액션 클라이언트 클래스 / Action client class
-from arduinobot_msgs.action import Fibonacci  # 피보나치 액션 인터페이스 / Fibonacci action interface
-
-class SimpleActionClient(Node):
-    def __init__(self):
-        # 노드 초기화 / Initialize node
-        super().__init__('simple_action_client')
-
-        # 액션 클라이언트 생성 / Create action client
-        # (노드, 인터페이스, 서버이름 / node, interface, server name)
-        self.action_client = ActionClient(self, Fibonacci, 'fibonacci')
-
-        # 서버 준비될 때까지 블로킹 대기 / Block until server is available
-        self.action_client.wait_for_server()
-
-        # Goal 메시지 생성 및 order 설정 / Create goal and set order
-        self.goal = Fibonacci.Goal()
-        self.goal.order = 10
-
-        # 비동기 Goal 전송 + Feedback 콜백 등록
-        # Send goal asynchronously + register feedback callback
-        self.future = self.action_client.send_goal_async(
-            self.goal,
-            feedback_callback=self.feedbackCallback
-        )
-
-        # Goal 수락/거절 응답 콜백 등록 / Register response callback
-        self.future.add_done_callback(self.responseCallback)
-
-    def responseCallback(self, future):
-        # Goal 수락/거절 여부 확인 / Check if goal was accepted or rejected
-        goal_handle = future.result()
-
-        if not goal_handle.accepted:
-            self.get_logger().info('Goal Rejected')
-            return
-
-        self.get_logger().info('Goal Accepted')
-
-        # 비동기 결과 요청 + 결과 콜백 등록
-        # Request result asynchronously + register result callback
-        self.future = goal_handle.get_result_async()
-        self.future.add_done_callback(self.resultCallback)
-
-    def resultCallback(self, future):
-        # 최종 결과 수신 / Receive final result
-        result = future.result().result
-        self.get_logger().info('Result: {0}'.format(result.sequence))
-
-        # 결과 수신 후 ROS2 종료 / Shutdown ROS2 after receiving result
-        rclpy.shutdown()
-
-    def feedbackCallback(self, feedback_msg):
-        # 주기적 Feedback 수신 시 실행 / Called each time feedback is received
-        self.get_logger().info(
-            'Received Feedback: {0}'.format(
-                feedback_msg.feedback.partial_sequence
-            )
-        )
-
-def main():
-    rclpy.init()
-    action_client = SimpleActionClient()
-    rclpy.spin(action_client)   # 콜백 처리를 위해 실행 유지 / Keep alive for callbacks
-
-if __name__ == '__main__':
-    main()
-```
-
-### 핵심 API / Key API
-
-| 함수 / Function | 설명 / Description |
-|---|---|
-| `ActionClient(node, interface, name)` | 액션 클라이언트 생성 / Create action client |
-| `wait_for_server()` | 서버 준비 대기 (블로킹) / Wait for server (blocking) |
-| `send_goal_async(goal, feedback_callback)` | 비동기 Goal 전송 / Send goal asynchronously |
-| `goal_handle.accepted` | Goal 수락 여부 확인 / Check if goal was accepted |
-| `goal_handle.get_result_async()` | 비동기 결과 요청 / Request result asynchronously |
-| `future.add_done_callback(fn)` | 완료 시 실행할 함수 등록 / Register callback on completion |
-
-### 세 가지 콜백 함수 / Three Callback Functions
-
-| 콜백 / Callback | 실행 시점 / When Called | 역할 / Role |
-|---|---|---|
-| `responseCallback` | Goal 전송 직후 / Right after sending goal | 서버의 수락/거절 여부 확인 / Check accepted or rejected |
-| `resultCallback` | 액션 완료 후 / After action completes | 최종 결과(전체 수열) 수신 / Receive final result |
-| `feedbackCallback` | 서버 실행 중 주기적 / Periodically during execution | 진행 상황(부분 수열) 수신 / Receive partial progress |
-
----
-
-## 5. 빌드 및 실행 / Build & Run
-
-### setup.py 등록 / Register in setup.py
-
-```python
-entry_points={
-    'console_scripts': [
-        'simple_action_server = arduinobot_examples.simple_action_server:main',
-        'simple_action_client = arduinobot_examples.simple_action_client:main',
-    ],
-},
+<depend>moveit_ros_planning_interface</depend>
 ```
 
 ### 빌드 / Build
@@ -290,99 +166,108 @@ entry_points={
 ```bash
 cd ~/ros2_ws
 colcon build
+```
+
+---
+
+## 4. 실행 순서 / Execution Order
+
+> 📌 총 5개의 터미널이 필요합니다 / 5 terminals required in total
+
+### 터미널 1 / Terminal 1 — Gazebo 시뮬레이션
+
+```bash
 source install/setup.bash
+ros2 launch arduinobot_description gazebo.launch.py
 ```
 
-### 실행 / Run
+### 터미널 2 / Terminal 2 — ROS2 Control 컨트롤러
 
 ```bash
-# 터미널 1 / Terminal 1: 액션 서버 실행 / Run action server
-ros2 run arduinobot_examples simple_action_server
-
-# 터미널 2 / Terminal 2: 액션 클라이언트 실행 / Run action client
-ros2 run arduinobot_examples simple_action_client
+source install/setup.bash
+ros2 launch arduinobot_controller controller.launch.py
+# arm_controller + gripper_controller 정상 실행 확인
+# Verify arm_controller + gripper_controller are running
 ```
 
-### 실행 결과 / Expected Output
+### 터미널 3 / Terminal 3 — MoveIt2 + RViz2
 
-```
-# 서버 터미널 / Server terminal
-[INFO] Starting the server
-[INFO] Received goal request with order 10
-[INFO] Feedback: [0, 1, 1]
-[INFO] Feedback: [0, 1, 1, 2]
-[INFO] Feedback: [0, 1, 1, 2, 3]
-...
-
-# 클라이언트 터미널 / Client terminal
-[INFO] Goal Accepted
-[INFO] Received Feedback: [0, 1, 1]
-[INFO] Received Feedback: [0, 1, 1, 2]
-...
-[INFO] Result: [0, 1, 1, 2, 3, 5, 8, 13, 21, 34]
+```bash
+source install/setup.bash
+ros2 launch arduinobot_moveit moveit.launch.py
 ```
 
-### 시나리오별 동작 / Behavior by Scenario
+### 터미널 4 / Terminal 4 — API 노드 실행 (C++ 또는 Python 선택)
 
-| 상황 / Situation | 결과 / Result |
-|---|---|
-| 서버 ON + 클라이언트 실행 / Server ON + client run | ✅ Goal 수락 → Feedback → Result |
-| 서버 OFF + 클라이언트 실행 / Server OFF + client run | ⏳ `wait_for_server()`에서 블로킹 대기 / Blocked at `wait_for_server()` |
-| 대기 중 서버 ON / Server starts while client waits | ✅ 자동으로 Goal 전송 / Auto sends goal |
+```bash
+# ── C++ 버전 / C++ version ──────────────────────────────────
+source install/setup.bash
+ros2 run arduinobot_cpp_examples simple_moveit_interface
+
+# ── Python 버전 / Python version (ROS2 Iron 이상 / Iron and above) ──
+source install/setup.bash
+ros2 launch arduinobot_examples simple_moveit_interface.launch.py
+```
+
+> 📌 **실행 방식 차이 / Execution difference**
+> C++: `ros2 run` 으로 직접 실행 / Direct execution with `ros2 run`
+> Python: 런치 파일 필요 → `ros2 launch` 사용 / Needs launch file → use `ros2 launch`
 
 ---
 
-## 6. CLI 명령어 / CLI Commands
+## 5. 실행 결과 / Expected Result
 
-```bash
-# 실행 중인 액션 목록 / List running actions
-ros2 action list
+```
+노드 실행 즉시 / Upon node execution:
 
-# 액션 상세 정보 확인 / Check action details
-ros2 action info /fibonacci -t
+1. MoveIt2가 현재 위치 → 목표 위치 궤적 자동 계획
+   MoveIt2 auto-plans trajectory: current → target
 
-# 터미널에서 직접 Goal 전송 (order=10, 피드백 포함)
-# Send goal directly from terminal (order=10, with feedback)
-ros2 action send_goal /fibonacci \
-  arduinobot_msgs/action/Fibonacci \
-  "{order: 10}" \
-  --feedback
+2. arm_controller: 로봇 베이스 90° 회전
+   arm_controller: Robot base rotates 90°
+
+3. gripper_controller: 그리퍼 열림
+   gripper_controller: Gripper opens
+```
+
+### 전체 실행 흐름 / Overall Execution Flow
+
+```
+simple_moveit_interface (C++ / Python)
+        │
+        ├── MoveGroupInterface 초기화 / Initialize
+        │     ├── arm     Move Group
+        │     └── gripper Move Group
+        │
+        ├── setJointValueTarget() → 범위 확인 / Check bounds
+        │
+        ├── plan() → 충돌 없는 궤적 계획 / Plan collision-free path
+        │     ├── 성공 / Success → move() 실행 / Execute
+        │     └── 실패 / Failed → RCLCPP_ERROR + return
+        │
+        └── move() → 모터 명령 전달 / Send motor commands
+                │
+                ↓
+        ROS2 Control
+        ├── arm_controller    → joint1, 2, 3
+        └── gripper_controller → joint4, 5
+                │
+                ↓
+        Gazebo 시뮬레이션에서 로봇 이동 확인
+        Verify robot motion in Gazebo simulation
 ```
 
 ---
 
-## 7. 서버 vs 클라이언트 비교 / Server vs Client Summary
+## 6. Python API vs C++ API 비교 / Comparison
 
-| 항목 / Item | 액션 서버 / Action Server | 액션 클라이언트 / Action Client |
+| 항목 / Item | Python API | C++ API |
 |---|---|---|
-| 생성 클래스 / Class | `ActionServer` | `ActionClient` |
-| 대기 방식 / Wait | Goal 수신 대기 / Waits for goals | `wait_for_server()` |
-| Goal 처리 / Goal | `goalCallback()` | `send_goal_async()` |
-| Feedback 처리 / Feedback | `publish_feedback()` | `feedbackCallback()` |
-| 완료 처리 / Completion | `goal_handle.succeed()` + `return result` | `resultCallback()` |
-| 동작 방식 / Behavior | 수동적 / Passive | 능동적 / Active |
-
----
-
-## 📋 전체 실행 흐름 / Overall Execution Flow
-
-```
-SimpleActionClient
-        │
-        │ wait_for_server() ─── 서버 대기 / Wait for server
-        │
-        │ send_goal_async(order=10)
-        ↓
-SimpleActionServer
-        │ Goal 수락 / Accept goal
-        │   → responseCallback(): "Goal Accepted"
-        │
-        │ 피보나치 계산 중 (1초마다) / Calculating (every 1s)
-        │   → feedbackCallback() 반복 / Repeated
-        │     "Received Feedback: [0, 1, 1, 2, ...]"
-        │
-        │ 계산 완료 / Calculation done
-        └── resultCallback()
-              "Result: [0,1,1,2,3,5,8,13,21,34]"
-              rclpy.shutdown() ── 클라이언트 종료 / Client exits
-```
+| **ROS2 버전 / Version** | Iron 이상 / Iron and above | Humble 포함 전 버전 / All versions |
+| **실행 방식 / Run** | `ros2 launch` | `ros2 run` |
+| **Move Group 접근 / Access** | `get_planning_component('arm')` | `MoveGroupInterface(node, "arm")` |
+| **목표 설정 / Set target** | `set_joint_group_positions()` | `setJointValueTarget()` |
+| **범위 확인 / Bounds check** | 별도 확인 없음 / Not explicit | bool 반환으로 확인 / Returns bool |
+| **궤적 계획 / Plan** | `plan()` | `plan(plan_obj)` |
+| **궤적 실행 / Execute** | `execute(trajectory)` | `move()` |
+| **추가 설정 파일 / Extra config** | `planning_python_api.yaml` 필요 / Required | 불필요 / Not needed |
